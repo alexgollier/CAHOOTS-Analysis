@@ -1,0 +1,234 @@
+---
+title: "CAHOOTS Project - Data Cleaning"
+author: "Alex Gollier"
+output: html_document
+date: "2026-04-21"
+---
+
+```{r}
+library(tidyverse)
+library(readxl)
+```
+
+
+## 1. Load Eugene CAD Data and Merge Yearly Files
+
+```{r}
+# Set the path to the folder with Eugene CAD csv files
+eugene_folder <- "Eugene_CAD_data_noloc"
+
+# Load all of the Eugene CAD data
+eugene_files <- list.files(
+  # Set path to folder with csv files
+  path = eugene_folder,
+  # Only grab .csv files
+  pattern = "\\.csv$",  
+  # Include the folder
+  full.names = TRUE
+)
+
+# Read every csv file and stack them into one dataframe (also treat NULL values as NA)
+eugene_raw <- map_dfr(eugene_files, read_csv, show_col_types = FALSE, na = c("", "NA", "NULL"))
+
+# Look at the data to ensure it was loaded correctly
+glimpse(eugene_raw)
+```
+
+## 2. Load and Merge SPD Data
+
+```{r}
+# Set path to SPD file
+spd_file <- "2015-2025 SPD Calls for Service.xlsx"
+
+# Get names of all tabs
+spd_sheets <- excel_sheets(spd_file)
+
+# Read and stack all tabs, reading all columns as text to avoid type conflicts
+spd_raw <- map_dfr(spd_sheets, ~ read_xlsx(spd_file, sheet = .x, col_types = "text"))
+
+cat("SPD rows:", nrow(spd_raw), "\n")  # check row count
+glimpse(spd_raw) 
+```
+
+
+## 3. Load MCSLC Data
+
+```{r}
+# Read the MCSLC file while treating non-city values as NA
+mcslc_raw <- read_xlsx("MCSLC.xlsx", na = c("", "Other", "Out of County", "Unknown"))
+
+# Look at the data
+glimpse(mcslc_raw)                    
+```
+## 4. Duplicates
+
+```{r}
+# Remove duplicate rows based on unique ID columns
+eugene <- eugene_raw %>% distinct(inci_id, .keep_all = TRUE)
+spd <- spd_raw %>% distinct(`Incident Number`, .keep_all = TRUE)
+mcslc <- mcslc_raw %>% distinct(ID, .keep_all = TRUE)
+```
+
+## 5. Missing Values
+
+### 5.1 Eugene Data
+
+```{r}
+# Look at total number of rows
+cat("Eugene CAD (", nrow(eugene), "rows)\n")
+
+# Check NAs across the important columns in the Eugene dataset
+colSums(is.na(eugene[c("inci_id", "calltime", "agency", "nature", "priority")]))
+```
+
+```{r}
+# Drop rows with missing nature or priority values as there are only a few
+eugene <- eugene %>% filter(!is.na(nature) & !is.na(priority))
+# Confirm that there are no NAs in these columns
+colSums(is.na(eugene[c("inci_id", "calltime", "agency", "nature", "priority")]))
+```
+
+### 5.2 SPD Data
+
+```{r}
+# Look at total number of SPD rows
+cat("SPD (", nrow(spd), "rows)\n")
+# Count the number of NA values in the relevant variables 
+colSums(is.na(spd[c("Incident Number", "Call Creation Time", "Primary Responding Unit", "Final Call Type", "Priority")]))
+```
+
+```{r}
+# Drop rows with missing Final Call Type or Priority (only a small percentage of the total dataset)
+spd <- spd %>% filter(!is.na(`Final Call Type`) & !is.na(`Priority`) & !is.na(`Primary Responding Unit`))
+
+# Confirm no NAs remain in the important columns
+colSums(is.na(spd[c("Incident Number", "Call Creation Time", "Primary Responding Unit", "Final Call Type", "Priority")]))
+```
+
+
+### 5.3 MCSLC Data
+
+```{r}
+# Count total number of MCSLC rows
+cat("MCSLC (", nrow(mcslc), "rows)\n")
+# Get the number of NA values for the relevant columns
+colSums(is.na(mcslc[c("ID", "City", "Dispatch Request Date & Time", "Reason for Dispatch #1")]))
+```
+
+
+
+```{r}
+# Drop rows with missing city, dispatch request date, or reason for dispatch
+mcslc <- mcslc %>% filter(!is.na(`Dispatch Request Date & Time`) & !is.na(`Reason for Dispatch #1`) & !is.na(City))
+
+# Confirm no NAs remain
+colSums(is.na(mcslc[c("ID", "City", "Dispatch Request Date & Time", "Reason for Dispatch #1")]))
+```
+
+## 6. Datetime Variables
+
+```{r}
+# Check datetime columns across all three datasets
+cat("Eugene calltime:\n")
+head(eugene$calltime)
+
+cat("\nSPD Call Creation Time:\n")
+head(spd$`Call Creation Time`)
+
+cat("\nMCSLC Dispatch Request Date & Time:\n")
+head(mcslc$`Dispatch Request Date & Time`)
+
+# Convert SPD Call Creation Time from Excel serial number to datetime
+spd <- spd %>% mutate(`Call Creation Time` = as.POSIXct(
+    # Convert days to seconds
+    as.numeric(`Call Creation Time`) * 86400,
+    # Excel's date system starts from this date
+    origin = "1899-12-30",
+    # Keep timezone consistent with the other datasets
+    tz = "UTC"
+  ))
+
+# Confirm conversion worked
+cat("\nSPD Call Creation Time Fixed:\n")
+head(spd$`Call Creation Time`)
+```
+
+## 6. Agency Variables
+
+### 6.1 Eugene Data
+
+```{r}
+# Rename CAHE to CAHOOTS
+eugene <- eugene %>% mutate(agency = recode(agency, "CAHE" = "CAHOOTS"))
+
+# Make sure the change worked
+eugene %>% count(agency)
+```
+
+### 6.2 SPD Data
+
+```{r}
+# Create an agency column that labels CAHOOTS calls using the #J## pattern 
+spd <- spd %>%
+  mutate(agency = if_else(
+    # Use a regex pattern
+    str_detect(`Primary Responding Unit`, "^\\dJ\\d{2}$"),  
+    "CAHOOTS",
+    "SPD"
+  ))
+
+# Confirm labeling worked
+spd %>% count(agency)
+```
+
+### 6.3 MCSLC Data
+
+```{r}
+# All rows are MCSLC so just add a label row
+mcslc <- mcslc %>% mutate(agency = "MCSLC")
+
+# Confirm it worked
+mcslc %>% count(agency)
+```
+
+## 7. Period Variable
+
+```{r}
+# Add period variable to Eugene CAD 
+eugene <- eugene %>% mutate(period = if_else(calltime < as.POSIXct("2025-04-08"), "before", "after"))
+
+# Add period variable to SPD
+spd <- spd %>% mutate(period = if_else(`Call Creation Time` < as.POSIXct("2025-04-08"), "before", "after"))
+
+# Add period variable to MCSLC
+mcslc <- mcslc %>% mutate(period = if_else(`Dispatch Request Date & Time` < as.POSIXct("2025-04-08"), "before", "after"))
+
+# Confirm period variable in each dataset
+eugene %>% count(period)
+spd %>% count(period)
+mcslc %>% count(period)
+```
+
+## 8. Select Columns
+
+```{r}
+# Keep only relevant columns in Eugene CAD
+eugene <- eugene %>% select(inci_id, calltime, agency, nature, priority, period)
+
+# Keep only relevant columns in SPD
+spd <- spd %>% select(`Incident Number`, `Call Creation Time`, `Primary Responding Unit`, `Final Call Type`, Priority, agency, period)
+
+# Keep only relevant columns in MCSLC
+mcslc <- mcslc %>% select(ID, City, `Dispatch Request Date & Time`, `Reason for Dispatch #1`, agency, period)
+
+# Confirm columns in each dataset
+head(eugene)
+head(spd)
+head(mcslc)
+```
+
+
+
+
+
+
