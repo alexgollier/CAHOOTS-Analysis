@@ -9,7 +9,6 @@ date: "2026-05-05"
 library(tidyverse)
 library(ggplot2)
 library(lubridate)
-source("cleaning.Rmd")
 ```
 
 ## Step 9: Monthly Aggregation
