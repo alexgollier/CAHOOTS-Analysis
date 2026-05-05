@@ -1,0 +1,110 @@
+# CAHOOTS Analysis
+
+## Step 9: Monthly Aggregation
+
+```{r}
+
+# Find monthly call counts by agency and period
+# EPD
+eugene_monthly <- eugene %>%
+  group_by(year_month, agency, period) %>%
+  summarise(call_count = n(), .groups = "drop") %>%
+  mutate(city = "Eugene")
+
+# SPD
+spd_monthly <- spd %>%
+  group_by(year_month, agency, period) %>%
+  summarise(call_count = n(), .groups = "drop") %>%
+  mutate(city = "Springfield")
+
+# MCSLC
+mcslc_monthly <- mcslc %>%
+  group_by(year_month, City, agency, period) %>%
+  summarise(call_count = n(), .groups = "drop") %>%
+  rename(city = City)
+
+# Combine into one dataframe
+monthly_combined <- bind_rows(eugene_monthly, spd_monthly, mcslc_monthly)
+
+# Check structure of results
+glimpse(eugene_monthly)
+glimpse(spd_monthly)
+glimpse(mcslc_monthly)
+glimpse(monthly_combined)
+```
+
+## Step 10: Proportion Calculation
+
+```{r}
+# Calculate total calls per city-month and each agency's proportion
+monthly_combined <- monthly_combined %>%
+  # Group by city and month
+  group_by(year_month, city) %>%
+  # Find proportions and get rid of extra grouping
+  mutate(total_calls = sum(call_count), proportion = call_count / total_calls) %>% ungroup()
+```
+
+
+## Step 11: Time-Series 
+
+```{r}
+# Set CAHOOTS service stop date as reference line
+cahoots_end <- as.POSIXct("2025-04-08")
+
+# Plot monthly call volumes by agency (faceted by city)
+monthly_combined %>%
+  filter(city %in% c("Eugene", "Springfield")) %>%
+  ggplot(aes(x = year_month, y = call_count, color = agency)) +
+  geom_line() +
+  facet_wrap(~ city) +
+  geom_vline(xintercept = as.numeric(cahoots_end), linetype = "dashed") +
+  labs(title = "Monthly Call Volumes by Agency", x = "Month", y = "Call Count", color = "Agency") +
+  theme_minimal()
+```
+
+```{r}
+# Plot monthly call proportions by agency (faceted by city)
+monthly_combined %>%
+  filter(city %in% c("Eugene", "Springfield")) %>%
+  ggplot(aes(x = year_month, y = proportion, color = agency)) +
+  geom_line() +
+  facet_wrap(~ city) +
+  geom_vline(xintercept = as.numeric(cahoots_end), linetype = "dashed") +
+  labs(title = "Monthly Call Proportions by Agency", x = "Month", y = "Proportion of Total Calls", color = "Agency") +
+  theme_minimal()
+```
+
+## Step 12: Before/After Bar Charts
+
+```{r}
+# calculate average monthly call counts by city, agency, and period
+before_after_counts <- monthly_combined %>%
+  filter(city %in% c("Eugene", "Springfield")) %>%
+  group_by(city, agency, period) %>%
+  summarise(avg_monthly_calls = mean(call_count), .groups = "drop") %>%
+  mutate(period = factor(period, levels = c("before", "after")))
+
+# Plot bars for before & after per agency (faceted by city)
+ggplot(before_after_counts, aes(x = agency, y = avg_monthly_calls, fill = period)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ city) +
+  labs(title = "Average Monthly Call Counts Before vs After CAHOOTS Service Stop", x = "Agency", y = "Avg Monthly Calls", fill = "Period") +
+  theme_minimal()
+```
+
+```{r before-after-proportions}
+# Calculate average monthly proportions by city, agency, and period
+before_after_props <- monthly_combined %>%
+  filter(city %in% c("Eugene", "Springfield")) %>%
+  group_by(city, agency, period) %>%
+  summarise(avg_proportion = mean(proportion), .groups = "drop") %>%
+  mutate(period = factor(period, levels = c("before", "after")))
+
+# Plot bars for before & after per agency (faceted by city)
+ggplot(before_after_props, aes(x = agency, y = avg_proportion, fill = period)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ city) +
+  labs(title = "Average Monthly Call Proportions Before vs After CAHOOTS Service Stop", x = "Agency", y = "Avg Proportion", fill = "Period") +
+  theme_minimal()
+```
+
