@@ -5,10 +5,16 @@ output: html_document
 date: "2026-05-05"
 ---
 
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+source("cleaning.Rmd")
+```
+
 ## Step 9: Monthly Aggregation
 
 ```{r}
-
 # Find monthly call counts by agency and period
 # EPD
 eugene_monthly <- eugene %>%
