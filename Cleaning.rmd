@@ -1,4 +1,9 @@
-# CAHOOTS CLEANING
+---
+title: "CAHOOTS Cleaning"
+author: "Alex Gollier"
+output: html_document
+date: "2026-05-05"
+---
 
 ```{r}
 library(tidyverse)
