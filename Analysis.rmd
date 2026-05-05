@@ -1,4 +1,9 @@
-# CAHOOTS Analysis
+---
+title: "CAHOOTS Analysis"
+author: "Alex Gollier"
+output: html_document
+date: "2026-05-05"
+---
 
 ## Step 9: Monthly Aggregation
 
