@@ -11,7 +11,6 @@ control through multiple different forms of analysis.
 R packages required:
 - tidyverse (includes dplyr, ggplot2, tidyr, stringr, lubridate, purrr, readr)
 - readxl
-- scales
 
 Install with:
 install.packages(c("tidyverse", "readxl", "scales"))
