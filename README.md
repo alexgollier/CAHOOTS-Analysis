@@ -9,7 +9,7 @@ control through multiple different forms of analysis.
 
 ### Dependencies
 R packages required:
-- tidyverse (includes dplyr, ggplot2, tidyr, stringr, lubridate, purrr, readr)
+- tidyverse (includes dplyr, ggplot2, tidyr, lubridate, readr)
 - readxl
 
 Install with:
