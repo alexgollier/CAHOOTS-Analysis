@@ -22,11 +22,14 @@ Place the following files in the working directory:
 - 2015-2025 SPD Calls for Service.xlsx
 - MCSLC.xlsx
 
+All scripts should be ran in an R Markdown file for best results.
+Make sure the R Markdown file is saved in the same folder as the 
+data files.
+
 Data was provided by Dr. Rohlfs through the DSiA course at the 
 University of Oregon, originally sourced from EPD, SPD, and MCSLC.
 
-### Scripts
-All scripts should be ran in an R Markdown file for best results. 
+### Scripts 
 
 Run in this order:
 
