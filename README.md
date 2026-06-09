@@ -18,7 +18,7 @@ install.packages(c("tidyverse", "readxl", "scales"))
 
 ### Data
 Place the following files in the working directory:
-- Eugene_CAD_data_noloc/ (folder containing yearly CSV files)
+- Eugene_CAD_data_noloc (folder containing yearly CSV files)
 - 2015-2025 SPD Calls for Service.xlsx
 - MCSLC.xlsx
 
