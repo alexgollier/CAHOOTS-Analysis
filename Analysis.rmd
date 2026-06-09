@@ -1,57 +1,20 @@
 ---
-title: "CAHOOTS Analysis"
+title: "CAHOOTS Project - Analysis"
 author: "Alex Gollier"
 output: html_document
-date: "2026-05-05"
+date: "2026-06-08"
 ---
 
 ```{r}
 library(tidyverse)
-library(ggplot2)
+library(readxl)
 library(lubridate)
-```
 
-## Step 9: Monthly Aggregation
-
-```{r}
-# Find monthly call counts by agency and period
-# EPD
-eugene_monthly <- eugene %>%
-  group_by(year_month, agency, period) %>%
-  summarise(call_count = n(), .groups = "drop") %>%
-  mutate(city = "Eugene")
-
-# SPD
-spd_monthly <- spd %>%
-  group_by(year_month, agency, period) %>%
-  summarise(call_count = n(), .groups = "drop") %>%
-  mutate(city = "Springfield")
-
-# MCSLC
-mcslc_monthly <- mcslc %>%
-  group_by(year_month, City, agency, period) %>%
-  summarise(call_count = n(), .groups = "drop") %>%
-  rename(city = City)
-
-# Combine into one dataframe
-monthly_combined <- bind_rows(eugene_monthly, spd_monthly, mcslc_monthly)
-
-# Check structure of results
-glimpse(eugene_monthly)
-glimpse(spd_monthly)
-glimpse(mcslc_monthly)
-glimpse(monthly_combined)
-```
-
-## Step 10: Proportion Calculation
-
-```{r}
-# Calculate total calls per city-month and each agency's proportion
-monthly_combined <- monthly_combined %>%
-  # Group by city and month
-  group_by(year_month, city) %>%
-  # Find proportions and get rid of extra grouping
-  mutate(total_calls = sum(call_count), proportion = call_count / total_calls) %>% ungroup()
+# Load cleaned data from cleaning.Rmd
+eugene <- readRDS("eugene_cleaned.rds")
+spd <- readRDS("spd_cleaned.rds")
+mcslc <- readRDS("mcslc_cleaned.rds")
+monthly_combined <- readRDS("monthly_combined.rds")
 ```
 
 
@@ -59,62 +22,672 @@ monthly_combined <- monthly_combined %>%
 
 ```{r}
 # Set CAHOOTS service stop date as reference line
-cahoots_end <- as.POSIXct("2025-04-08")
+cahoots_end <- as.Date("2025-04-01")
 
-# Plot monthly call volumes by agency (faceted by city)
-monthly_combined %>%
-  filter(city %in% c("Eugene", "Springfield")) %>%
-  ggplot(aes(x = year_month, y = call_count, color = agency)) +
-  geom_line() +
-  facet_wrap(~ city) +
-  geom_vline(xintercept = as.numeric(cahoots_end), linetype = "dashed") +
-  labs(title = "Monthly Call Volumes by Agency", x = "Month", y = "Call Count", color = "Agency") +
-  theme_minimal()
-```
-
-```{r}
-# Plot monthly call proportions by agency (faceted by city)
-monthly_combined %>%
+# Plot monthly call proportions by agency 
+proportion_ts_plot <- monthly_combined %>%
   filter(city %in% c("Eugene", "Springfield")) %>%
   ggplot(aes(x = year_month, y = proportion, color = agency)) +
   geom_line() +
-  facet_wrap(~ city) +
-  geom_vline(xintercept = as.numeric(cahoots_end), linetype = "dashed") +
-  labs(title = "Monthly Call Proportions by Agency", x = "Month", y = "Proportion of Total Calls", color = "Agency") +
+  facet_wrap(~ city, ncol = 1) +
+  geom_vline(xintercept = cahoots_end, linetype = "dashed") +
+  scale_x_datetime(date_breaks = "2 years", date_labels = "%Y") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_color_manual(values = c(
+    "EPD" = "#032C3C",
+    "SPD" = "#2E86C1",
+    "CAHOOTS" = "#BA351A",
+    "MCSLC" = "#808080"
+  )) +
+  labs(
+    title = "Monthly Call Proportions by Agency",
+    x = "Month",
+    y = "Proportion of Total Calls",
+    color = "Agency"
+  ) +
   theme_minimal()
+
+# Display results
+proportion_ts_plot
+
+# Save as an image
+ggsave("proportion_ts_plot.jpeg", plot = proportion_ts_plot, width = 10, height = 8, dpi = 300)
 ```
 
-## Step 12: Before/After Bar Charts
+## Step 12: DiD Analysis
+
+### 12.1: Overall Window Call Proportion DiD Analysis
 
 ```{r}
-# calculate average monthly call counts by city, agency, and period
-before_after_counts <- monthly_combined %>%
-  filter(city %in% c("Eugene", "Springfield")) %>%
-  group_by(city, agency, period) %>%
-  summarise(avg_monthly_calls = mean(call_count), .groups = "drop") %>%
-  mutate(period = factor(period, levels = c("before", "after")))
+# Build regression dataset
+did_reg_data <- monthly_combined %>%
+  filter((city == "Eugene" & agency == "EPD") | (city == "Springfield" & agency == "SPD")) %>%
+  mutate(treat = if_else(city == "Eugene", 1, 0), post = if_else(period == "after", 1, 0),
+    treat_post = treat * post)
 
-# Plot bars for before & after per agency (faceted by city)
-ggplot(before_after_counts, aes(x = agency, y = avg_monthly_calls, fill = period)) +
-  geom_col(position = "dodge") +
-  facet_wrap(~ city) +
-  labs(title = "Average Monthly Call Counts Before vs After CAHOOTS Service Stop", x = "Agency", y = "Avg Monthly Calls", fill = "Period") +
-  theme_minimal()
+# Run DiD regression
+did_model <- lm(proportion ~ treat + post + treat_post, data = did_reg_data)
+summary(did_model)
 ```
 
-```{r before-after-proportions}
-# Calculate average monthly proportions by city, agency, and period
-before_after_props <- monthly_combined %>%
-  filter(city %in% c("Eugene", "Springfield")) %>%
-  group_by(city, agency, period) %>%
-  summarise(avg_proportion = mean(proportion), .groups = "drop") %>%
-  mutate(period = factor(period, levels = c("before", "after")))
+### 12.2: Matched Calendar Window Call Proportion DiD Analysis
 
-# Plot bars for before & after per agency (faceted by city)
-ggplot(before_after_props, aes(x = agency, y = avg_proportion, fill = period)) +
-  geom_col(position = "dodge") +
-  facet_wrap(~ city) +
-  labs(title = "Average Monthly Call Proportions Before vs After CAHOOTS Service Stop", x = "Agency", y = "Avg Proportion", fill = "Period") +
-  theme_minimal()
+```{r}
+# Filter to match the same calendar window 
+did_reg_data_matched <- did_reg_data %>%
+  filter((period == "after") |
+    (period == "before" & year_month >= as.Date("2024-04-01") & year_month <= as.Date("2024-12-01"))
+  )
+
+# Rerun DiD with matched window
+did_model_matched <- lm(proportion ~ treat + post + treat_post, data = did_reg_data_matched)
+
+# Show Summary
+summary(did_model_matched)
 ```
 
+
+### 12.3: Overall Window Call Proportion DiD Analysis Plot
+
+```{r}
+# Build DiD summary data for plotting
+did_data <- did_reg_data %>%
+  group_by(city, period) %>%
+  summarise(avg_proportion = mean(proportion), .groups = "drop")
+
+# Build and save the DiD plot
+did_plot <- did_data %>%
+  mutate(period = factor(period,
+                          levels = c("before", "after"),
+                          labels = c("Before April 2025", "After April 2025"))) %>%
+  ggplot(aes(x = period, y = avg_proportion, color = city, group = city)) +
+  geom_line(linewidth = 2) +
+  geom_point(size = 5) +
+  geom_text(aes(label = scales::percent(avg_proportion, accuracy = 0.1),
+                vjust = ifelse(city == "Springfield" & period == "After April 2025", 2.2, -1.5),
+                hjust = ifelse(city == "Eugene" & period == "Before April 2025", 1.3, 0.5)),
+            size = 4,
+            show.legend = FALSE) +
+  scale_y_continuous(limits = c(0.80, 0.97),
+                     labels = scales::percent_format(accuracy = 1)) +
+  scale_color_manual(values = c("Eugene" = "#BA351A", "Springfield" = "#032C3C")) +
+  labs(
+    title = "DiD Analysis: EPD vs SPD Call Share",
+    x = NULL,
+    y = "Proportion of Total Calls",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    aspect.ratio = 1
+  )
+
+# Save as JPEG
+ggsave("did_plot.jpeg", plot = did_plot, width = 6, height = 6, dpi = 300)
+
+# Display
+did_plot
+```
+### 12.4: Matched Window Call Proportion DiD Analysis Plot
+
+```{r}
+# Build matched-window summary data
+did_data_matched <- did_reg_data_matched %>%
+  group_by(city, period) %>%
+  summarise(avg_proportion = mean(proportion), .groups = "drop")
+
+# Build and save the matched-window DiD plot
+did_plot_matched <- did_data_matched %>%
+  mutate(period = factor(period,
+                          levels = c("before", "after"),
+                          labels = c("Before April 2025", "After April 2025"))) %>%
+  ggplot(aes(x = period, y = avg_proportion, color = city, group = city)) +
+  geom_line(linewidth = 2) +
+  geom_point(size = 5) +
+  geom_text(aes(label = scales::percent(avg_proportion, accuracy = 0.1),
+                vjust = ifelse(city == "Springfield" & period == "After April 2025", 2.2, -1.5),
+                hjust = ifelse(city == "Eugene" & period == "Before April 2025", 1.3, 0.5)),
+            size = 4,
+            show.legend = FALSE) +
+  scale_y_continuous(limits = c(0.80, 0.97),
+                     labels = scales::percent_format(accuracy = 1)) +
+  scale_color_manual(values = c("Eugene" = "#BA351A", "Springfield" = "#032C3C")) +
+  labs(
+    title = "DiD Analysis: EPD vs SPD Call Share (Matched Window)",
+    x = NULL,
+    y = "Proportion of Total Calls",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    aspect.ratio = 1
+  )
+
+# Save plot
+ggsave("did_plot_matched.jpeg", plot = did_plot_matched, width = 6, height = 6, dpi = 300)
+
+# Display
+did_plot_matched
+```
+## Step 13: Parallel Trends Test
+
+### 13.1: Overall Window Parallel Trends Test
+
+```{r}
+# Build pre-treatment EPD/SPD data 
+pre_trend_data <- monthly_combined %>%
+  filter((city == "Eugene" & agency == "EPD") |
+         (city == "Springfield" & agency == "SPD")) %>%
+  filter(period == "before") %>%
+  mutate(
+    treat = if_else(city == "Eugene", 1, 0),
+    time_index = as.numeric(year_month)
+  )
+
+# Test for differential pre-trends
+pre_trend_test <- lm(proportion ~ treat + time_index + treat:time_index, data = pre_trend_data)
+
+# Show results
+summary(pre_trend_test)
+```
+
+### 13.2: Overall Window Parallel Trends Chart
+
+```{r}
+parallel_trends_plot <- monthly_combined %>%
+  filter((city == "Eugene" & agency == "EPD") |
+           (city == "Springfield" & agency == "SPD")) %>%
+  filter(period == "before") %>%
+  ggplot(aes(x = year_month, y = proportion, color = city)) +
+  geom_line() +
+  scale_x_datetime(date_breaks = "2 years", date_labels = "%Y") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_color_manual(values = c("Eugene" = "#BA351A", "Springfield" = "#032C3C")) +
+  labs(
+    title = "Parallel Trends Check: Pre-Treatment Period Only",
+    x = NULL,
+    y = "Proportion of Total Calls",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    aspect.ratio = 0.5
+  )
+
+ggsave("parallel_trends_plot.jpeg", plot = parallel_trends_plot, width = 10, height = 5, dpi = 300)
+parallel_trends_plot
+```
+
+### 13.3: Matched Window Parallel Trends Test
+
+```{r}
+# Parallel trends test for matched window 
+pre_trend_data_matched <- monthly_combined %>%
+  filter((city == "Eugene" & agency == "EPD") |
+         (city == "Springfield" & agency == "SPD")) %>%
+  filter(period == "before") %>%
+  filter(year_month >= as.Date("2024-04-01") & year_month <= as.Date("2024-12-01")) %>%
+  mutate(
+    treat = if_else(city == "Eugene", 1, 0),
+    time_index = as.numeric(year_month)
+  )
+pre_trend_test_matched <- lm(proportion ~ treat + time_index + treat:time_index,
+                              data = pre_trend_data_matched)
+
+# Show Results
+summary(pre_trend_test_matched)
+```
+
+
+## 14. Volume-Based Analysis
+
+### 14.1: Volume-Based Bar Chart
+
+```{r}
+# Build EPD volume across three time windows
+epd_stability_matched <- eugene %>%
+  filter(agency == "EPD") %>%
+  mutate(
+    period_label = case_when(
+      calltime >= as.POSIXct("2025-04-08") ~ "Post Apr 2025",
+      calltime >= as.POSIXct("2024-04-01") & calltime <= as.POSIXct("2024-12-31") ~ "1-Year Pre",
+      calltime >= as.POSIXct("2015-01-01") & calltime < as.POSIXct("2025-04-08") ~ "Pre Apr 2025",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(period_label)) %>%
+  filter(as.character(year_month) != "2025-04-01") %>%
+  filter(as.character(year_month) != "2023-01-01") %>%
+  group_by(period_label, year_month) %>%
+  summarise(monthly_count = n(), .groups = "drop") %>%
+  group_by(period_label) %>%
+  summarise(avg_monthly_calls = mean(monthly_count), .groups = "drop") %>%
+  mutate(period_label = factor(period_label, levels = c(
+    "Pre Apr 2025",
+    "1-Year Pre",
+    "Post Apr 2025"
+  )))
+
+# Plot
+volume_plot <- epd_stability_matched %>%
+  ggplot(aes(x = period_label, y = avg_monthly_calls, fill = period_label)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = scales::comma(round(avg_monthly_calls, 0))),
+            vjust = -0.5, size = 4) +
+  scale_y_continuous(limits = c(0, 8000),
+                     labels = scales::comma) +
+  scale_fill_manual(values = c(
+    "Pre Apr 2025" = "#032C3C",
+    "1-Year Pre" = "#032C3C",
+    "Post Apr 2025" = "#BA351A"
+  )) +
+  labs(
+    title = "EPD Average Monthly Call Volume Across Time Periods",
+    x = NULL,
+    y = "Average Monthly Calls",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    legend.position = "none",
+    axis.text.x = element_text(size = 14),
+    aspect.ratio = 1
+  )
+
+# Save as JPEG
+ggsave("volume_plot.jpeg", plot = volume_plot, width = 6, height = 6, dpi = 300)
+
+# Display
+volume_plot
+```
+
+### 14.2: Volume-Based Linear Regression
+
+```{r}
+# EPD volume change
+epd_volume_data <- monthly_combined %>%
+  filter(city == "Eugene" & agency == "EPD") %>%
+  filter(
+    (period == "after") |
+    (period == "before" & year_month >= as.Date("2024-04-01") & year_month <= as.Date("2024-12-01"))
+  ) %>%
+  mutate(post = if_else(period == "after", 1, 0))
+
+epd_volume_model <- lm(call_count ~ post, data = epd_volume_data)
+summary(epd_volume_model)
+```
+## 15: Call-Type Analysis
+
+### 15.1: CAHOOTS Call Type Frequency
+
+```{r}
+# Find the frequency of CAHOOTS call types in Eugene
+eugene %>%
+  filter(agency == "CAHOOTS", period == "before") %>%
+  count(nature, sort = TRUE) %>%
+  mutate(proportion = n / sum(n) * 100) %>%
+  slice_head(n = 5) %>%
+  print()
+```
+
+### 15.2: EPD Absorption Analysis
+
+```{r}
+# EPD before/after for top 4 CAHOOTS call types
+top_cahoots_types <- c("PUBLIC ASSIST", "CHECK WELFARE", "TRANSPORT", "SUICIDAL SUBJECT")
+
+# CAHOOTS average monthly calls per type — matched window
+cahoots_monthly <- eugene %>%
+  filter(agency == "CAHOOTS", period == "before") %>%
+  filter(nature %in% top_cahoots_types) %>%
+  filter(calltime >= as.POSIXct("2024-04-01") & calltime <= as.POSIXct("2024-12-31")) %>%
+  group_by(nature, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(nature) %>%
+  summarise(CAHOOTS_Avg_Monthly = round(mean(n), 0), .groups = "drop")
+
+# Create the table
+epd_absorption_table <- eugene %>%
+  filter(agency == "EPD") %>%
+  filter(nature %in% top_cahoots_types) %>%
+  filter(
+    (period == "after") |
+    (period == "before" & calltime >= as.POSIXct("2024-04-01") & calltime <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(nature, period, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(nature, period) %>%
+  summarise(avg_monthly = round(mean(n), 0), .groups = "drop") %>%
+  pivot_wider(names_from = period, values_from = avg_monthly) %>%
+  rename(EPD_Before = before, EPD_After = after) %>%
+  mutate(
+    Change = EPD_After - EPD_Before,
+    Pct_Change = round((EPD_After - EPD_Before) / EPD_Before * 100, 1)
+  ) %>%
+  left_join(cahoots_monthly, by = "nature") %>%
+  select(nature, CAHOOTS_Avg_Monthly, EPD_Before, EPD_After, Change, Pct_Change) %>%
+  arrange(desc(CAHOOTS_Avg_Monthly))
+
+# Show
+print(epd_absorption_table)
+```
+
+### 15.3: EPD Absorption Plot
+
+```{r}
+# Build absorption data 
+absorption_data <- eugene %>%
+  filter(agency == "EPD") %>%
+  filter(nature %in% c("PUBLIC ASSIST", "CHECK WELFARE", "SUICIDAL SUBJECT")) %>%
+  filter(
+    (period == "after") |
+    (period == "before" & calltime >= as.POSIXct("2024-04-01") & calltime <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(nature, period, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(nature, period) %>%
+  summarise(avg_monthly = mean(n), .groups = "drop") %>%
+  mutate(period = factor(period, levels = c("before", "after"),
+                          labels = c("Pre Apr 2025", "Post Apr 2025"))) %>%
+  mutate(nature = factor(nature, 
+                          levels = c("PUBLIC ASSIST", "CHECK WELFARE", "SUICIDAL SUBJECT"),
+                          labels = c("PUBLIC ASSIST", "WELFARE", "SUICIDAL")))
+
+# Plot
+absorption_plot <- ggplot(absorption_data, aes(x = nature, y = avg_monthly, fill = period)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = scales::comma(round(avg_monthly, 0))),
+            position = position_dodge(width = 0.8),
+            vjust = -0.5, size = 5.5) +
+  scale_y_continuous(limits = c(0, 480),
+                     labels = scales::comma) +
+  scale_fill_manual(values = c("Pre Apr 2025" = "#032C3C", "Post Apr 2025" = "#BA351A")) +
+  labs(
+    title = "EPD Monthly Call Volume by Call Type",
+    x = NULL,
+    y = "Average Monthly Calls",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 16, hjust = 0.5),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    aspect.ratio = 1
+  )
+
+# Save Plot
+ggsave("absorption_plot.jpeg", plot = absorption_plot, width = 6, height = 6, dpi = 300)
+
+# Display
+absorption_plot
+```
+
+
+### 15.4: DiD for Check Welfare and Suicidal Subject
+
+```{r}
+# Per-call-type DiD for Check Welfare and Suicidal Subject
+# EPD
+epd_calltype_monthly <- eugene %>%
+  filter(agency == "EPD") %>%
+  filter(nature %in% c("CHECK WELFARE", "SUICIDAL SUBJECT")) %>%
+  group_by(year_month, nature, period) %>%
+  summarise(call_count = n(), .groups = "drop") %>%
+  mutate(city = "Eugene") %>%
+  rename(call_type = nature)
+
+# SPD
+spd_calltype_monthly <- spd %>%
+  filter(agency == "SPD") %>%
+  filter(`Final Call Type` %in% c("CHECK WELFARE", "SUICIDAL SUBJECT")) %>%
+  group_by(year_month, `Final Call Type`, period) %>%
+  summarise(call_count = n(), .groups = "drop") %>%
+  mutate(city = "Springfield") %>%
+  rename(call_type = `Final Call Type`)
+
+# Combined
+calltype_combined <- bind_rows(epd_calltype_monthly, spd_calltype_monthly) %>%
+  filter(as.character(year_month) != "2023-01-01") %>%
+  filter(as.character(year_month) != "2025-04-01")
+
+calltype_did_key <- calltype_combined %>%
+  filter(
+    (period == "after") |
+    (period == "before" & year_month >= as.Date("2024-04-01") & year_month <= as.Date("2024-12-01"))
+  ) %>%
+  mutate(
+    treat = if_else(city == "Eugene", 1, 0),
+    post = if_else(period == "after", 1, 0),
+    treat_post = treat * post
+  ) %>%
+  group_by(call_type) %>%
+  do({
+    model <- lm(call_count ~ treat + post + treat_post, data = .)
+    tibble(
+      did_estimate = round(coef(model)["treat_post"], 1),
+      p_value = summary(model)$coefficients["treat_post", "Pr(>|t|)"]
+    )
+  }) %>%
+  ungroup()
+
+print(calltype_did_key)
+```
+
+### 15.5: Parallel trends for Check Welfare and Suicidal Subject
+
+```{r}
+# Parallel trends for Check Welfare and Suicidal Subject
+calltype_parallel <- calltype_combined %>%
+  filter(call_type %in% c("CHECK WELFARE", "SUICIDAL SUBJECT")) %>%
+  filter(period == "before") %>%
+  filter(year_month >= as.Date("2024-04-01") & year_month <= as.Date("2024-12-01")) %>%
+  mutate(
+    treat = if_else(city == "Eugene", 1, 0),
+    time_index = as.numeric(year_month)
+  ) %>%
+  group_by(call_type) %>%
+  do({
+    model <- lm(call_count ~ treat + time_index + treat:time_index, data = .)
+    tibble(
+      interaction_estimate = coef(model)["treat:time_index"],
+      p_value = summary(model)$coefficients["treat:time_index", "Pr(>|t|)"]
+    )
+  }) %>%
+  ungroup()
+
+print(calltype_parallel)
+```
+
+### 15.6: Public Assist t-test
+
+```{r}
+# Public Assist t-test because no SPD equivalent
+pa_data <- eugene %>%
+  filter(agency == "EPD", nature == "PUBLIC ASSIST") %>%
+  filter(
+    (period == "after") |
+    (period == "before" & calltime >= as.POSIXct("2024-04-01") & calltime <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(period, year_month) %>%
+  summarise(call_count = n(), .groups = "drop") %>%
+  mutate(post = if_else(period == "after", 1, 0))
+
+pa_model <- lm(call_count ~ post, data = pa_data)
+summary(pa_model)
+```
+
+
+### 15.7: Eugene Monthly Suicide Calls
+
+```{r}
+# Create a table that compares monthly suicide calls before and after by agency
+
+# EPD suicides
+epd_suicidal <- eugene %>%
+  filter(agency == "EPD", nature == "SUICIDAL SUBJECT") %>%
+  filter(
+    (period == "after") |
+    (period == "before" & calltime >= as.POSIXct("2024-04-01") & calltime <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(period, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(period) %>%
+  summarise(avg_monthly = round(mean(n), 1), .groups = "drop") %>%
+  mutate(agency = "EPD")
+
+# CAHOOTS suicidal (eugene)
+cahoots_suicidal <- eugene %>%
+  filter(agency == "CAHOOTS", nature == "SUICIDAL SUBJECT") %>%
+  filter(
+    (period == "after") |
+    (period == "before" & calltime >= as.POSIXct("2024-04-01") & calltime <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(period, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(period) %>%
+  summarise(avg_monthly = round(mean(n), 1), .groups = "drop") %>%
+  mutate(agency = "CAHOOTS")
+
+# SPD suicidal
+spd_suicidal <- spd %>%
+  filter(agency == "SPD", `Final Call Type` == "SUICIDAL SUBJECT") %>%
+  filter(
+    (period == "after") |
+    (period == "before" & `Call Creation Time` >= as.POSIXct("2024-04-01") & 
+       `Call Creation Time` <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(period, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(period) %>%
+  summarise(avg_monthly = round(mean(n), 1), .groups = "drop") %>%
+  mutate(agency = "SPD")
+
+# MCSLC suicidal
+mcslc_suicidal <- mcslc %>%
+  filter(City == "Eugene", `Reason for Dispatch #1` == "Suicidality or suicide attempt") %>%
+  filter(
+    (period == "after") |
+    (period == "before" & `Dispatch Request Date & Time` >= as.POSIXct("2024-04-01") & 
+       `Dispatch Request Date & Time` <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(period, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(period) %>%
+  summarise(avg_monthly = round(mean(n), 1), .groups = "drop") %>%
+  mutate(agency = "MCSLC")
+
+# Combine and pivot wide
+bind_rows(epd_suicidal, cahoots_suicidal, spd_suicidal, mcslc_suicidal) %>%
+  pivot_wider(names_from = period, values_from = avg_monthly, values_fill = 0) %>%
+  select(agency, before, after) %>%
+  print()
+```
+
+### 15.8: EPD Lost Calls Analysis
+
+```{r}
+# EPD biggest percentage decreases — matched window, min 40 calls/month
+epd_decreases <- eugene %>%
+  filter(agency == "EPD") %>%
+  filter(
+    (period == "after") |
+    (period == "before" & calltime >= as.POSIXct("2024-04-01") & calltime <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(nature, period, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(nature, period) %>%
+  summarise(avg_monthly = round(mean(n), 0), .groups = "drop") %>%
+  pivot_wider(names_from = period, values_from = avg_monthly) %>%
+  filter(!is.na(before) & !is.na(after)) %>%
+  filter(before >= 40) %>%
+  mutate(EPD_Pct_Change = round((after - before) / before * 100, 1)) %>%
+  filter(EPD_Pct_Change < 0) %>%
+  rename(EPD_Before = before, EPD_After = after)
+
+# SPD matched window for comparison
+spd_decreases <- spd %>%
+  filter(agency == "SPD") %>%
+  filter(
+    (period == "after") |
+    (period == "before" & `Call Creation Time` >= as.POSIXct("2024-04-01") & `Call Creation Time` <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(`Final Call Type`, period, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(`Final Call Type`, period) %>%
+  summarise(avg_monthly = round(mean(n), 0), .groups = "drop") %>%
+  pivot_wider(names_from = period, values_from = avg_monthly) %>%
+  mutate(SPD_Pct_Change = round((after - before) / before * 100, 1)) %>%
+  rename(nature = `Final Call Type`, SPD_Before = before, SPD_After = after)
+
+# Combine
+decreases_table <- epd_decreases %>%
+  left_join(spd_decreases, by = "nature") %>%
+  select(nature, EPD_Before, EPD_After, EPD_Pct_Change, SPD_Before, SPD_After, SPD_Pct_Change) %>%
+  arrange(EPD_Pct_Change)
+
+print(decreases_table, n = 10)
+```
+
+### 15.9: EPD Call Reprioritization Chart
+
+```{r}
+# Find how certain call types were reprioritized
+reprioritization_data <- eugene %>%
+  filter(agency == "EPD") %>%
+  filter(nature %in% c("CRIMINAL TRESPASS", "BURGLARY", "OVERDOSE", "ILLEGAL BURNING")) %>%
+  filter(
+    (period == "after") |
+    (period == "before" & calltime >= as.POSIXct("2024-04-01") & calltime <= as.POSIXct("2024-12-31"))
+  ) %>%
+  group_by(nature, period, year_month) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(nature, period) %>%
+  summarise(avg_monthly = mean(n), .groups = "drop") %>%
+  mutate(period = factor(period, levels = c("before", "after"),
+                          labels = c("Pre Apr 2025", "Post Apr 2025"))) %>%
+  mutate(nature = factor(nature, 
+                          levels = c("CRIMINAL TRESPASS", "ILLEGAL BURNING", "BURGLARY", "OVERDOSE"),
+                          labels = c("TRESPASS", "ILLEGAL BURN", "BURGLARY", "OVERDOSE")))
+
+reprioritization_plot <- ggplot(reprioritization_data, aes(x = nature, y = avg_monthly, fill = period)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = scales::comma(round(avg_monthly, 0))),
+            position = position_dodge(width = 0.8),
+            vjust = -0.5, size = 5.5) +
+  scale_y_continuous(limits = c(0, 560),
+                     labels = scales::comma) +
+  scale_fill_manual(values = c("Pre Apr 2025" = "#032C3C", "Post Apr 2025" = "#BA351A")) +
+  labs(
+    title = "EPD Monthly Call Volume by Call Type",
+    x = NULL,
+    y = "Average Monthly Calls",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 16, hjust = 0.5),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 13),
+    axis.title.y = element_text(size = 14),
+    aspect.ratio = 1
+  )
+
+reprioritization_plot
+ggsave("reprioritization_plot.jpeg", plot = reprioritization_plot, width = 6, height = 6, dpi = 300)
+```
