@@ -1,15 +1,17 @@
 ---
-title: "CAHOOTS Cleaning"
+title: "CAHOOTS Project"
 author: "Alex Gollier"
 output: html_document
-date: "2026-05-05"
+date: "2026-06-08"
 ---
 
 ```{r}
 library(tidyverse)
 library(readxl)
 library(lubridate)
+library(ggplot2)
 ```
+
 
 ## 1. Loading and Merging 
 
@@ -35,6 +37,7 @@ eugene_raw <- map_dfr(eugene_files, read_csv, show_col_types = FALSE, na = c("",
 # Look at the data to ensure it was loaded correctly
 glimpse(eugene_raw)
 ```
+
 
 ### 1.2 Load and Merge SPD Data
 
@@ -80,14 +83,15 @@ mcslc <- mcslc_raw %>% distinct(ID, .keep_all = TRUE)
 cat("Eugene CAD (", nrow(eugene), "rows)\n")
 
 # Check NAs across the important columns in the Eugene dataset
-colSums(is.na(eugene[c("inci_id", "calltime", "agency", "nature", "priority")]))
+colSums(is.na(eugene[c("inci_id", "calltime", "agency", "nature", "primeunit")]))
 ```
 
 ```{r}
-# Drop rows with missing nature or priority values as there are only a few
-eugene <- eugene %>% filter(!is.na(nature) & !is.na(priority))
-# Confirm that there are no NAs in these columns
-colSums(is.na(eugene[c("inci_id", "calltime", "agency", "nature", "priority")]))
+# Drop rows with missing nature, priority, or primeunit
+eugene <- eugene %>% filter(!is.na(nature) & !is.na(primeunit))
+
+# Verify rows were dropped
+colSums(is.na(eugene[c("inci_id", "calltime", "agency", "nature", "primeunit")]))
 ```
 
 ### 3.2 SPD Data
@@ -95,8 +99,9 @@ colSums(is.na(eugene[c("inci_id", "calltime", "agency", "nature", "priority")]))
 ```{r}
 # Look at total number of SPD rows
 cat("SPD (", nrow(spd), "rows)\n")
+
 # Count the number of NA values in the relevant variables 
-colSums(is.na(spd[c("Incident Number", "Call Creation Time", "Primary Responding Unit", "Final Call Type", "Priority")]))
+colSums(is.na(spd[c("Incident Number", "Call Creation Time", "Primary Responding Unit", "Final Call Type")]))
 ```
 
 ```{r}
@@ -104,7 +109,7 @@ colSums(is.na(spd[c("Incident Number", "Call Creation Time", "Primary Responding
 spd <- spd %>% filter(!is.na(`Final Call Type`) & !is.na(`Priority`) & !is.na(`Primary Responding Unit`))
 
 # Confirm no NAs remain in the important columns
-colSums(is.na(spd[c("Incident Number", "Call Creation Time", "Primary Responding Unit", "Final Call Type", "Priority")]))
+colSums(is.na(spd[c("Incident Number", "Call Creation Time", "Primary Responding Unit", "Final Call Type")]))
 ```
 
 
@@ -113,6 +118,7 @@ colSums(is.na(spd[c("Incident Number", "Call Creation Time", "Primary Responding
 ```{r}
 # Count total number of MCSLC rows
 cat("MCSLC (", nrow(mcslc), "rows)\n")
+
 # Get the number of NA values for the relevant columns
 colSums(is.na(mcslc[c("ID", "City", "Dispatch Request Date & Time", "Reason for Dispatch #1")]))
 ```
@@ -157,24 +163,26 @@ head(spd$`Call Creation Time`)
 
 ## 5. Agency Variables
 
-```{r}
-# Eugene CAD
-eugene_raw %>% count(agency)
-
-# SPD
-spd_raw %>%
-  filter(!is.na(`Primary Responding Unit`)) %>%
-  count(`Primary Responding Unit`, sort = TRUE) %>%
-  head(100)
-```
 
 ### 5.1 Eugene Data
 
 ```{r}
-# Rename CAHE to CAHOOTS
-eugene <- eugene %>% mutate(agency = recode(agency, "CAHE" = "CAHOOTS"))
+# Label CAHOOTS calls using the given format patterns, default everything else to EPD
+eugene <- eugene %>%
+  mutate(agency = case_when(
+    agency == "CAHE" ~ "CAHOOTS",
+    !is.na(primeunit) & primeunit == "_CAHOT" ~ "CAHOOTS",
+    !is.na(primeunit) & str_detect(primeunit, "^_\\dJ\\d{2}$") ~ "CAHOOTS",
+    !is.na(nature) & str_detect(nature, "CAHOOTS") ~ "CAHOOTS",
+    TRUE ~ "EPD"
+  ))
 
-# Make sure the change worked
+# Clean nature column by stripping the CAHOOTS suffix     
+eugene <- eugene %>%
+  mutate(nature = str_remove(nature, ",\\s*CAHOOTS.*$")) %>%
+  mutate(nature = if_else(str_detect(nature, "PUBLIC ASSIST|ASSIST PUBLIC"), "PUBLIC ASSIST", nature))
+
+# Confirm labeling worked
 eugene %>% count(agency)
 ```
 
@@ -225,10 +233,14 @@ mcslc %>% count(period)
 
 ```{r}
 # Add year-month column to each dataset
+
+# EPD
 eugene <- eugene %>% mutate(year_month = floor_date(calltime, "month"))
 
+# SPD
 spd <- spd %>% mutate(year_month = floor_date(`Call Creation Time`, "month"))
 
+# MCSLC
 mcslc <- mcslc %>% mutate(year_month = floor_date(`Dispatch Request Date & Time`, "month"))
 ```
 
@@ -237,10 +249,10 @@ mcslc <- mcslc %>% mutate(year_month = floor_date(`Dispatch Request Date & Time`
 
 ```{r}
 # Keep only relevant columns in Eugene CAD
-eugene <- eugene %>% select(inci_id, calltime, agency, nature, priority, period, year_month)
+eugene <- eugene %>% select(inci_id, calltime, agency, nature, period, year_month, primeunit)
 
 # Keep only relevant columns in SPD
-spd <- spd %>% select(`Incident Number`, `Call Creation Time`, `Primary Responding Unit`, `Final Call Type`, Priority, agency, period, year_month)
+spd <- spd %>% select(`Incident Number`, `Call Creation Time`, `Primary Responding Unit`, `Final Call Type`, agency, period, year_month)
 
 # Keep only relevant columns in MCSLC
 mcslc <- mcslc %>% select(ID, City, `Dispatch Request Date & Time`, `Reason for Dispatch #1`, agency, period, year_month)
@@ -250,3 +262,57 @@ head(eugene)
 head(spd)
 head(mcslc)
 ```
+
+## 9. Monthly Aggregation
+
+```{r}
+# Find monthly call counts by agency and period
+
+# EPD
+eugene_monthly <- eugene %>%
+  group_by(year_month, agency, period) %>%
+  summarise(call_count = n(), .groups = "drop") %>%
+  mutate(city = "Eugene")
+
+# SPD
+spd_monthly <- spd %>%
+  group_by(year_month, agency, period) %>%
+  summarise(call_count = n(), .groups = "drop") %>%
+  mutate(city = "Springfield")
+
+# MCSLC
+mcslc_monthly <- mcslc %>%
+  group_by(year_month, City, agency, period) %>%
+  summarise(call_count = n(), .groups = "drop") %>%
+  rename(city = City)
+
+# Combine into one dataframe
+monthly_combined <- bind_rows(eugene_monthly, spd_monthly, mcslc_monthly) %>%
+  # Drop January 2023 due to weird missing values 
+  filter(as.character(year_month) != "2023-01-01") %>%    
+  # Drop April 2025 due to split
+  filter(as.character(year_month) != "2025-04-01")
+
+# Check structure of results
+glimpse(eugene_monthly)
+glimpse(spd_monthly)
+glimpse(mcslc_monthly)
+glimpse(monthly_combined)
+```
+
+## 10. Proportion Calculation
+
+```{r}
+# Calculate total calls per city-month and each agency's proportion
+monthly_combined <- monthly_combined %>%
+  # Group by city and month
+  group_by(year_month, city) %>%
+  # Find proportions and get rid of extra grouping
+  mutate(total_calls = sum(call_count), proportion = call_count / total_calls) %>% ungroup()
+```
+
+# Save cleaned objects for analysis
+saveRDS(eugene, "eugene_cleaned.rds")
+saveRDS(spd, "spd_cleaned.rds")
+saveRDS(mcslc, "mcslc_cleaned.rds")
+saveRDS(monthly_combined, "monthly_combined.rds")
