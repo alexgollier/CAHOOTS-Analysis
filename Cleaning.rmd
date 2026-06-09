@@ -311,8 +311,11 @@ monthly_combined <- monthly_combined %>%
   mutate(total_calls = sum(call_count), proportion = call_count / total_calls) %>% ungroup()
 ```
 
+```{r}
 # Save cleaned objects for analysis
 saveRDS(eugene, "eugene_cleaned.rds")
 saveRDS(spd, "spd_cleaned.rds")
 saveRDS(mcslc, "mcslc_cleaned.rds")
 saveRDS(monthly_combined, "monthly_combined.rds")
+```
+
