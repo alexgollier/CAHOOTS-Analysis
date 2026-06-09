@@ -1,41 +1,53 @@
 # CAHOOTS Analysis
+## EPD's Shifting Burden After CAHOOTS Stopped Services in Eugene
 
-## Overview
-This project analyzes how call volumes and proportions changed when CAHOOTS 
-stopped services in Eugene in April 2025, using Springfield as a control city.
+### Overview
+This project analyzes how call volumes and proportions changed for the 
+Eugene Police Department (EPD) after CAHOOTS stopped 
+services in April 2025, using Springfield as a
+control through multiple different forms of analysis.
 
-## Dependencies
-The following R packages are required:
-- tidyverse
-- ggplot2
+### Dependencies
+R packages required:
+- tidyverse (includes dplyr, ggplot2, tidyr, stringr, lubridate, purrr, readr)
 - readxl
-- lubridate
+- scales
 
-Install all packages with:
-install.packages(c("tidyverse", "ggplot2", "readxl", "lubridate"))
+Install with:
+install.packages(c("tidyverse", "readxl", "scales"))
 
-## Data
-Place the following files in the same directory as the scripts:
-- Eugene_CAD_data_noloc/ (folder containing 11 yearly CSV files)
+### Data
+Place the following files in the working directory:
+- Eugene_CAD_data_noloc/ (folder containing yearly CSV files)
 - 2015-2025 SPD Calls for Service.xlsx
 - MCSLC.xlsx
 
-Data was provided via the DSiA course at the University of Oregon and is not 
-publicly available.
+Data was provided by Dr. Rohlfs through the DSiA course at the 
+University of Oregon, originally sourced from EPD, SPD, and MCSLC.
 
-## Scripts
+### Scripts
+All scripts should be ran in an R Markdown file for best results. 
+
 Run in this order:
 
-1. cleaning.Rmd — loads and merges all three datasets, removes duplicates, 
-   handles missing values, converts datetime variables, labels agencies, 
-   adds period and year_month columns, and selects relevant columns.
+1. **Cleaning.Rmd** — Loads and merges all three datasets, removes 
+   duplicates, handles missing values, converts datetime variables, 
+   labels agencies, adds period and year-month columns, aggregates 
+   monthly call counts, and calculates within-city proportions. 
+   Saves four .rds files used by the analysis script.
 
-2. analysis.Rmd — performs monthly aggregation, proportion calculation, 
-   time series visualizations, and before/after bar charts comparing 
-   call volumes and proportions across agencies before and after 
-   April 8, 2025.
+2. **Analysis.Rmd** — Loads the cleaned data and performs all 
+   analytical steps: descriptive time-series visualization, 
+   difference-in-differences estimation, parallel trends testing,
+   EPD volume stability analysis, call-type absorption analysis
+   with per-type DiD and t-tests, and call-type decrease comparisons
+   between Eugene and Springfield.
 
-## Notes
-- cleaning.Rmd must be run before analysis.Rmd
-- April 8, 2025 is used as the cutoff date for the before/after period 
-  variable, as this was the date CAHOOTS stopped services in Eugene
+### Key Dates
+- April 8, 2025: CAHOOTS stops services in Eugene (treatment date)
+- January 2023: Excluded due to CAHOOTS labor action
+- April 2025: Excluded as a partial month
+- Matched window: April–December 2024 vs. May–December 2025
+
+### Author
+Alex Gollier — DSCI 410, University of Oregon
